@@ -1,6 +1,4 @@
-@import url('https://cdn.jsdelivr.net/npm/tailwindcss@3.3.0/base.min.css');
-@import url('https://cdn.jsdelivr.net/npm/tailwindcss@3.3.0/components.min.css');
-@import url('https://cdn.jsdelivr.net/npm/tailwindcss@3.3.0/utilities.min.css');
+@import url('https://cdn.jsdelivr.net/npm/tailwindcss@3.3.0/dist/tailwind.min.css');
 
 * {
   margin: 0;
