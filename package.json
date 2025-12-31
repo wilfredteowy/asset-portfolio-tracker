@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "npx vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prebuild": "chmod +x node_modules/.bin/vite"
   },
   "dependencies": {
     "react": "^18.2.0",
