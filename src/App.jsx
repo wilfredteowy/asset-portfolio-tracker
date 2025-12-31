@@ -12,6 +12,7 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [error, setError] = useState(null);
   const [prices, setPrices] = useState({});
+  const [isFetchingPrices, setIsFetchingPrices] = useState(false);
 
   useEffect(() => {
     console.log('App mounting...');
@@ -178,18 +179,90 @@ function App() {
   };
 
   const fetchPrices = async (assets) => {
+    setIsFetchingPrices(true);
     const priceMap = {};
     
+    // Map common crypto symbols to CoinGecko IDs
+    const cryptoIdMap = {
+      'BTC': 'bitcoin',
+      'ETH': 'ethereum',
+      'USDT': 'tether',
+      'BNB': 'binancecoin',
+      'SOL': 'solana',
+      'XRP': 'ripple',
+      'ADA': 'cardano',
+      'DOGE': 'dogecoin',
+      'MATIC': 'matic-network',
+      'AVAX': 'avalanche-2',
+      'DOT': 'polkadot',
+      'LINK': 'chainlink'
+    };
+    
     for (const asset of assets) {
-      // Set all prices to null initially (will display as "--")
-      priceMap[asset.symbol] = null;
+      try {
+        let price = null;
+        
+        if (asset.category === 'Crypto') {
+          // Use CoinGecko for crypto (has CORS enabled)
+          const coinId = cryptoIdMap[asset.symbol] || asset.symbol.toLowerCase();
+          console.log(`Fetching crypto price for ${asset.symbol} (ID: ${coinId})`);
+          
+          try {
+            const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+            if (response.ok) {
+              const data = await response.json();
+              if (data[coinId]?.usd) {
+                price = data[coinId].usd;
+                console.log(`✓ Got price for ${asset.symbol}: ${price}`);
+              }
+            }
+          } catch (err) {
+            console.error(`✗ CoinGecko error for ${asset.symbol}:`, err);
+          }
+        } else {
+          // For stocks/bonds, use Yahoo Finance with CORS proxy
+          console.log(`Fetching stock price for ${asset.symbol}`);
+          
+          try {
+            // Use allorigins.win as CORS proxy
+            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${asset.symbol}?interval=1d&range=1d`;
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+            
+            const response = await fetch(proxyUrl);
+            if (response.ok) {
+              const data = await response.json();
+              
+              if (data.chart?.result?.[0]?.meta?.regularMarketPrice) {
+                price = data.chart.result[0].meta.regularMarketPrice;
+                console.log(`✓ Got price for ${asset.symbol}: ${price}`);
+              } else if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
+                const closes = data.chart.result[0].indicators.quote[0].close;
+                const validCloses = closes.filter(c => c !== null && c !== undefined);
+                if (validCloses.length > 0) {
+                  price = validCloses[validCloses.length - 1];
+                  console.log(`✓ Got close price for ${asset.symbol}: ${price}`);
+                }
+              }
+            }
+          } catch (err) {
+            console.error(`✗ Yahoo Finance error for ${asset.symbol}:`, err);
+          }
+        }
+        
+        priceMap[asset.symbol] = price;
+        
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 250));
+        
+      } catch (err) {
+        console.error(`Error fetching price for ${asset.symbol}:`, err);
+        priceMap[asset.symbol] = null;
+      }
     }
     
+    console.log('Final price map:', priceMap);
     setPrices(priceMap);
-    
-    // Note: Price fetching is disabled due to CORS restrictions
-    // Users should manually update prices or we need a backend proxy
-    console.log('Price fetching is currently disabled. Prices will show as "--"');
+    setIsFetchingPrices(false);
   };
 
   const calculateAssets = (assets, txns) => {
@@ -326,10 +399,20 @@ function App() {
             <h1 className="text-3xl font-bold text-slate-800">Asset Portfolio Tracker</h1>
             <p className="text-slate-600">Connected to Google Sheets</p>
           </div>
-          <button onClick={loadData} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
-            <RefreshCw size={18} />
-            Refresh Data
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => fetchPrices(masterAssets)} 
+              disabled={isFetchingPrices}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:bg-slate-400"
+            >
+              <RefreshCw size={18} className={isFetchingPrices ? 'animate-spin' : ''} />
+              {isFetchingPrices ? 'Fetching Prices...' : 'Fetch Prices'}
+            </button>
+            <button onClick={loadData} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
+              <RefreshCw size={18} />
+              Refresh Data
+            </button>
+          </div>
         </div>
         
         {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6 text-sm">{error}</div>}
