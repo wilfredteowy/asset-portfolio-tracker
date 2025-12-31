@@ -198,14 +198,13 @@ function App() {
         let price = 100; // Default fallback
         
         if (asset.category === 'Crypto') {
-          // Use CoinGecko for crypto
+          // CoinGecko has CORS enabled, should work directly
           const coinId = cryptoIdMap[asset.symbol] || asset.symbol.toLowerCase();
           console.log(`Fetching crypto price for ${asset.symbol} (ID: ${coinId})`);
           
           try {
             const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
             const data = await response.json();
-            console.log(`CoinGecko response for ${asset.symbol}:`, data);
             
             if (data[coinId]?.usd) {
               price = data[coinId].usd;
@@ -215,27 +214,26 @@ function App() {
             console.error(`CoinGecko error for ${asset.symbol}:`, cryptoErr);
           }
         } else {
-          // Use Yahoo Finance for stocks/bonds via proxy-free endpoint
+          // Use CORS proxy for Yahoo Finance
           console.log(`Fetching stock price for ${asset.symbol}`);
           
           try {
-            // Try Yahoo Finance API v8
-            const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${asset.symbol}?interval=1d&range=1d`, {
-              headers: {
-                'User-Agent': 'Mozilla/5.0'
-              }
-            });
+            const proxyUrl = 'https://api.allorigins.win/raw?url=';
+            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${asset.symbol}?interval=1d&range=1d`;
+            
+            const response = await fetch(proxyUrl + encodeURIComponent(yahooUrl));
             const data = await response.json();
-            console.log(`Yahoo response for ${asset.symbol}:`, data);
             
             if (data.chart?.result?.[0]?.meta?.regularMarketPrice) {
               price = data.chart.result[0].meta.regularMarketPrice;
               console.log(`Got price for ${asset.symbol}: ${price}`);
             } else if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
-              // Fallback to latest close price
               const closes = data.chart.result[0].indicators.quote[0].close;
-              price = closes[closes.length - 1];
-              console.log(`Got close price for ${asset.symbol}: ${price}`);
+              const validCloses = closes.filter(c => c !== null);
+              if (validCloses.length > 0) {
+                price = validCloses[validCloses.length - 1];
+                console.log(`Got close price for ${asset.symbol}: ${price}`);
+              }
             }
           } catch (stockErr) {
             console.error(`Yahoo Finance error for ${asset.symbol}:`, stockErr);
@@ -245,8 +243,11 @@ function App() {
         priceMap[asset.symbol] = price;
       } catch (err) {
         console.error(`Error fetching price for ${asset.symbol}:`, err);
-        priceMap[asset.symbol] = 100; // Fallback
+        priceMap[asset.symbol] = 100;
       }
+      
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
     
     console.log('Final price map:', priceMap);
