@@ -47,25 +47,28 @@ class SheetsAPI {
   }
 
   static async authorize() {
-    return new Promise((resolve, reject) => {
-      if (!this.tokenClient) {
-        reject(new Error('Token client not initialized'));
-        return;
-      }
-      this.tokenClient.callback = (resp) => {
-        if (resp.error !== undefined) {
-          reject(resp);
-        } else {
-          resolve();
-        }
-      };
-      if (window.gapi.client.getToken() === null) {
-        this.tokenClient.requestAccessToken({ prompt: 'consent' });
+  return new Promise((resolve, reject) => {
+    if (!this.tokenClient) {
+      reject(new Error('Token client not initialized'));
+      return;
+    }
+    
+    this.tokenClient.callback = (resp) => {
+      if (resp.error !== undefined) {
+        reject(resp);
       } else {
-        this.tokenClient.requestAccessToken({ prompt: '' });
+        resolve();
       }
-    });
-  }
+    };
+    
+    // This is the part to update/replace
+    if (window.gapi.client.getToken() === null) {
+      this.tokenClient.requestAccessToken({ prompt: 'consent', ux_mode: 'redirect' });
+    } else {
+      this.tokenClient.requestAccessToken({ prompt: '', ux_mode: 'redirect' });
+    }
+  });
+}
 
   static async readSheet(range) {
     const response = await window.gapi.client.sheets.spreadsheets.values.get({
