@@ -128,13 +128,13 @@ function App() {
       });
       setTransactions(loadedTransactions);
 
-      // Fetch prices for all assets
-      await fetchPrices(loadedAssets);
-      
-      // Calculate asset metrics from transactions
+      // Calculate assets from transactions first (with null prices)
       calculateAssets(loadedAssets, loadedTransactions);
       
       setIsLoading(false);
+      
+      // Fetch prices after data is loaded
+      await fetchPrices(loadedAssets);
     } catch (err) {
       console.error('Error loading data:', err);
       setError('Failed to load data: ' + err.message);
@@ -181,6 +181,12 @@ function App() {
   const fetchPrices = async (assets) => {
     setIsFetchingPrices(true);
     const priceMap = {};
+    
+    // Initialize all prices as null (fetching)
+    assets.forEach(asset => {
+      priceMap[asset.symbol] = null;
+    });
+    setPrices({ ...priceMap });
     
     // Map common crypto symbols to CoinGecko IDs
     const cryptoIdMap = {
@@ -294,6 +300,10 @@ function App() {
         }
         
         priceMap[asset.symbol] = price;
+        
+        // Update immediately for this asset
+        setPrices({ ...priceMap });
+        calculateAssets(assets, transactions);
         
         // Small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 250));
@@ -488,7 +498,7 @@ function App() {
           </div>
         </div>
 
-        {activeTab === 'assets' && <AssetsView assets={calculatedAssets} />}
+        {activeTab === 'assets' && <AssetsView assets={calculatedAssets} isFetchingPrices={isFetchingPrices} />}
         {activeTab === 'transactions' && <TransactionsView transactions={transactions} accounts={accounts} masterAssets={masterAssets} onAddTransaction={handleAddTransaction} />}
         {activeTab === 'accounts' && <AccountsView accounts={accounts} />}
       </div>
@@ -496,7 +506,7 @@ function App() {
   );
 }
 
-function AssetsView({ assets }) {
+function AssetsView({ assets, isFetchingPrices }) {
   const summary = useMemo(() => {
     return assets.reduce((acc, asset) => {
       if (asset.currentValueSGD !== null) {
@@ -584,7 +594,12 @@ function AssetsView({ assets }) {
                 <td className="px-4 py-3 text-slate-600">{asset.symbol}</td>
                 <td className="px-4 py-3"><span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">{asset.portfolio}</span></td>
                 <td className="px-4 py-3 text-right">
-                  {asset.currentPrice !== null && asset.currentPrice !== undefined ? (
+                  {isFetchingPrices && (asset.currentPrice === null || asset.currentPrice === undefined) ? (
+                    <div className="flex items-center justify-end gap-2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-300 border-t-blue-600"></div>
+                      <span className="text-slate-400 text-sm">Fetching...</span>
+                    </div>
+                  ) : asset.currentPrice !== null && asset.currentPrice !== undefined ? (
                     <span>{asset.currentPrice.toFixed(2)}</span>
                   ) : (
                     <span className="text-orange-500 font-semibold">--</span>
