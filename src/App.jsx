@@ -270,8 +270,17 @@ function App() {
   };
 
   const calculateAssets = (assets, txns) => {
+    console.log('Calculating assets from transactions...');
+    
     const calculated = assets.map(asset => {
-      const assetTxns = txns.filter(t => t.symbol === asset.symbol);
+      // Match transactions by symbol OR asset name
+      const assetTxns = txns.filter(t => {
+        const symbolMatch = t.symbol && asset.symbol && t.symbol.toUpperCase() === asset.symbol.toUpperCase();
+        const nameMatch = t.asset && asset.name && t.asset.trim().toLowerCase() === asset.name.trim().toLowerCase();
+        return symbolMatch || nameMatch;
+      });
+      
+      console.log(`Asset ${asset.name} (${asset.symbol}): found ${assetTxns.length} transactions`);
       
       let currentHoldings = 0;
       let cumulativeHoldings = 0;
