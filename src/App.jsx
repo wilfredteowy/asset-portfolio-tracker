@@ -6,6 +6,7 @@ class SheetsAPI {
   static tokenClient = null;
   static gapiInited = false;
   static gisInited = false;
+  static accessToken = null;
 
   static async initGoogleAPI() {
     return new Promise((resolve) => {
@@ -38,7 +39,13 @@ class SheetsAPI {
       this.tokenClient = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CONFIG.CLIENT_ID,
         scope: GOOGLE_CONFIG.SCOPES,
-        callback: callback,
+        callback: (response) => {
+          if (response.access_token) {
+            this.accessToken = response.access_token;
+            window.gapi.client.setToken({ access_token: response.access_token });
+            callback();
+          }
+        },
       });
       this.gisInited = true;
     } catch (err) {
@@ -47,28 +54,26 @@ class SheetsAPI {
   }
 
   static async authorize() {
-  return new Promise((resolve, reject) => {
-    if (!this.tokenClient) {
-      reject(new Error('Token client not initialized'));
-      return;
-    }
-    
-    this.tokenClient.callback = (resp) => {
-      if (resp.error !== undefined) {
-        reject(resp);
-      } else {
-        resolve();
+    return new Promise((resolve, reject) => {
+      if (!this.tokenClient) {
+        reject(new Error('Token client not initialized'));
+        return;
       }
-    };
-    
-    // This is the part to update/replace
-    if (window.gapi.client.getToken() === null) {
-      this.tokenClient.requestAccessToken({ prompt: 'consent', ux_mode: 'redirect' });
-    } else {
-      this.tokenClient.requestAccessToken({ prompt: '', ux_mode: 'redirect' });
-    }
-  });
-}
+      
+      // Request token - this will open in same window
+      this.tokenClient.callback = (resp) => {
+        if (resp.error !== undefined) {
+          reject(resp);
+        } else {
+          this.accessToken = resp.access_token;
+          window.gapi.client.setToken({ access_token: resp.access_token });
+          resolve();
+        }
+      };
+      
+      this.tokenClient.requestAccessToken({ prompt: 'consent' });
+    });
+  }
 
   static async readSheet(range) {
     const response = await window.gapi.client.sheets.spreadsheets.values.get({
