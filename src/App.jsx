@@ -4,13 +4,14 @@ import { GOOGLE_CONFIG } from './config';
 
 function App() {
   const [activeTab, setActiveTab] = useState('assets');
-  const [assets, setAssets] = useState([]);
+  const [masterAssets, setMasterAssets] = useState([]);
+  const [calculatedAssets, setCalculatedAssets] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [error, setError] = useState(null);
-  const [accessToken, setAccessToken] = useState(null);
+  const [prices, setPrices] = useState({});
 
   useEffect(() => {
     console.log('App mounting...');
@@ -33,7 +34,6 @@ function App() {
               clearInterval(checkGapi);
               resolve();
             } else if (attempts > 50) {
-              console.error('Timeout waiting for Google APIs');
               clearInterval(checkGapi);
               resolve();
             }
@@ -49,13 +49,11 @@ function App() {
             apiKey: GOOGLE_CONFIG.API_KEY,
             discoveryDocs: [GOOGLE_CONFIG.DISCOVERY_DOC],
           });
-          console.log('GAPI client initialized');
         }
 
         setIsLoading(false);
       } catch (err) {
-        console.error('Error initializing APIs:', err);
-        setError('Failed to initialize: ' + err.message);
+        setError('Failed to initialize');
         setIsLoading(false);
       }
     };
@@ -63,42 +61,12 @@ function App() {
     initGoogleAPIs();
   }, []);
 
-  const handleSignIn = () => {
-    console.log('Initiating sign in...');
-    
-    const client = window.google.accounts.oauth2.initCodeClient({
-      client_id: GOOGLE_CONFIG.CLIENT_ID,
-      scope: GOOGLE_CONFIG.SCOPES,
-      ux_mode: 'redirect',
-      redirect_uri: window.location.origin,
-    });
-    
-    client.requestCode();
-  };
-
-  // Check for OAuth code in URL on mount
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    
-    if (code) {
-      console.log('OAuth code found, exchanging for token...');
-      // In a real app, you'd exchange this code for a token on your backend
-      // For now, we'll use a simpler token-based flow
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, []);
-
   const handleSignInWithToken = () => {
-    console.log('Starting token-based auth...');
-    
     const tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CONFIG.CLIENT_ID,
       scope: GOOGLE_CONFIG.SCOPES,
       callback: async (tokenResponse) => {
-        console.log('Token received');
         if (tokenResponse && tokenResponse.access_token) {
-          setAccessToken(tokenResponse.access_token);
           window.gapi.client.setToken({ access_token: tokenResponse.access_token });
           setIsAuthenticated(true);
           await loadData();
@@ -106,22 +74,32 @@ function App() {
       },
     });
     
-    // Check if we already have a token
     const token = window.gapi.client.getToken();
     if (token === null) {
-      console.log('Requesting new token...');
       tokenClient.requestAccessToken({ prompt: 'consent' });
     } else {
-      console.log('Using existing token...');
       tokenClient.requestAccessToken({ prompt: '' });
     }
   };
 
   const loadData = async () => {
     try {
-      console.log('Loading data from sheets...');
       setIsLoading(true);
       
+      // Load master assets from Assets sheet
+      const assetsData = await readSheet('assets!A2:F');
+      const loadedAssets = assetsData.map((row, idx) => ({
+        id: idx + 1,
+        name: row[0] || '',
+        symbol: (row[1] || '').toUpperCase().trim(),
+        portfolio: row[2] || '',
+        category: row[3] || '',
+        exchange: row[4] || '',
+        currency: row[5] || 'USD'
+      }));
+      setMasterAssets(loadedAssets);
+
+      // Load accounts
       const accountsData = await readSheet('accounts!A2:B');
       const loadedAccounts = accountsData.map((row, idx) => ({
         id: idx + 1,
@@ -130,6 +108,7 @@ function App() {
       }));
       setAccounts(loadedAccounts);
 
+      // Load transactions
       const transactionsData = await readSheet('transactions!A2:H');
       const loadedTransactions = transactionsData.map((row, idx) => {
         const account = loadedAccounts.find(a => a.accountName === row[7]);
@@ -138,7 +117,7 @@ function App() {
           date: parseDate(row[0] || ''),
           type: row[1] || '',
           asset: row[2] || '',
-          symbol: row[3] || '',
+          symbol: (row[3] || '').toUpperCase().trim(),
           transactedUnits: parseFloat(row[4]) || 0,
           transactedPrice: parseFloat(row[5]) || 0,
           fees: parseFloat(row[6]) || 0,
@@ -147,9 +126,13 @@ function App() {
         };
       });
       setTransactions(loadedTransactions);
-      calculateAssets(loadedTransactions);
+
+      // Fetch prices for all assets
+      await fetchPrices(loadedAssets);
       
-      console.log(`Loaded ${loadedAccounts.length} accounts and ${loadedTransactions.length} transactions`);
+      // Calculate asset metrics from transactions
+      calculateAssets(loadedAssets, loadedTransactions);
+      
       setIsLoading(false);
     } catch (err) {
       console.error('Error loading data:', err);
@@ -166,6 +149,16 @@ function App() {
     return response.result.values || [];
   };
 
+  const writeSheet = async (range, values) => {
+    const response = await window.gapi.client.sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_CONFIG.SPREADSHEET_ID,
+      range: range,
+      valueInputOption: 'USER_ENTERED',
+      resource: { values: values },
+    });
+    return response.result;
+  };
+
   const parseDate = (dateStr) => {
     if (!dateStr) return '';
     const parts = dateStr.split('/');
@@ -175,25 +168,53 @@ function App() {
     return dateStr;
   };
 
-  const calculateAssets = (txns) => {
-    const assetMap = {};
-    
-    txns.forEach(txn => {
-      if (!assetMap[txn.symbol]) {
-        assetMap[txn.symbol] = {
-          asset: txn.asset,
-          symbol: txn.symbol,
-          portfolio: 'General',
-          category: 'Stock',
-          currency: 'USD',
-          currentPrice: 100,
-          transactions: []
-        };
-      }
-      assetMap[txn.symbol].transactions.push(txn);
-    });
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
+  };
 
-    const calculatedAssets = Object.values(assetMap).map(assetData => {
+  const fetchPrices = async (assets) => {
+    const priceMap = {};
+    
+    for (const asset of assets) {
+      try {
+        let price = 100; // Default fallback
+        
+        if (asset.category === 'Crypto') {
+          // Use CoinGecko for crypto
+          const coinId = asset.symbol.toLowerCase();
+          const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+          const data = await response.json();
+          if (data[coinId]?.usd) {
+            price = data[coinId].usd;
+          }
+        } else {
+          // Use Yahoo Finance for stocks/bonds
+          const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${asset.symbol}`);
+          const data = await response.json();
+          if (data.chart?.result?.[0]?.meta?.regularMarketPrice) {
+            price = data.chart.result[0].meta.regularMarketPrice;
+          }
+        }
+        
+        priceMap[asset.symbol] = price;
+      } catch (err) {
+        console.error(`Error fetching price for ${asset.symbol}:`, err);
+        priceMap[asset.symbol] = 100; // Fallback
+      }
+    }
+    
+    setPrices(priceMap);
+  };
+
+  const calculateAssets = (assets, txns) => {
+    const calculated = assets.map(asset => {
+      const assetTxns = txns.filter(t => t.symbol === asset.symbol);
+      
       let currentHoldings = 0;
       let cumulativeHoldings = 0;
       let costOfCurrentHoldings = 0;
@@ -201,9 +222,9 @@ function App() {
       let realizedPL = 0;
       let dividends = 0;
 
-      assetData.transactions.sort((a, b) => new Date(a.date) - new Date(b.date));
+      assetTxns.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-      assetData.transactions.forEach(txn => {
+      assetTxns.forEach(txn => {
         if (txn.type === 'Buy') {
           currentHoldings += txn.transactedUnits;
           cumulativeHoldings += txn.transactedUnits;
@@ -224,19 +245,16 @@ function App() {
         }
       });
 
+      const currentPrice = prices[asset.symbol] || 100;
       const costPerUnit = currentHoldings > 0 ? costOfCurrentHoldings / currentHoldings : 0;
-      const currentValue = currentHoldings * assetData.currentPrice;
+      const currentValue = currentHoldings * currentPrice;
       const paperProfitLoss = currentValue - costOfCurrentHoldings;
       const paperProfitLossPercent = costOfCurrentHoldings > 0 ? (paperProfitLoss / costOfCurrentHoldings) * 100 : 0;
-      const sgdRate = assetData.currency === 'SGD' ? 1 : 1.35;
+      const sgdRate = asset.currency === 'SGD' ? 1 : 1.35;
       
       return {
-        asset: assetData.asset,
-        symbol: assetData.symbol,
-        portfolio: assetData.portfolio,
-        category: assetData.category,
-        currency: assetData.currency,
-        currentPrice: assetData.currentPrice,
+        ...asset,
+        currentPrice,
         currentHoldings,
         cumulativeHoldings,
         costOfCurrentHoldings,
@@ -255,7 +273,42 @@ function App() {
       };
     });
 
-    setAssets(calculatedAssets);
+    setCalculatedAssets(calculated);
+  };
+
+  const handleAddTransaction = async (transaction) => {
+    try {
+      const row = [
+        formatDate(transaction.date),
+        transaction.type,
+        transaction.asset,
+        transaction.symbol.toUpperCase(),
+        transaction.transactedUnits,
+        transaction.transactedPrice,
+        transaction.fees,
+        transaction.accountName
+      ];
+      
+      await writeSheet('transactions!A:H', [row]);
+      
+      // If new asset, add to Assets sheet
+      if (transaction.isNewAsset) {
+        const assetRow = [
+          transaction.asset,
+          transaction.symbol.toUpperCase(),
+          transaction.portfolio || 'General',
+          transaction.category || 'Stock',
+          transaction.exchange || '',
+          transaction.currency || 'USD'
+        ];
+        await writeSheet('assets!A:F', [assetRow]);
+      }
+      
+      await loadData();
+    } catch (err) {
+      console.error('Error adding transaction:', err);
+      setError('Failed to add transaction');
+    }
   };
 
   if (isLoading) {
@@ -274,17 +327,11 @@ function App() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full text-center">
           <h1 className="text-2xl font-bold text-slate-800 mb-4">Asset Portfolio Tracker</h1>
-          <p className="text-slate-600 mb-6">Sign in with your Google account to access your portfolio data from Google Sheets.</p>
+          <p className="text-slate-600 mb-6">Sign in with your Google account to access your portfolio data.</p>
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">{error}</div>}
-          <button 
-            onClick={handleSignInWithToken} 
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-semibold w-full mb-3"
-          >
+          <button onClick={handleSignInWithToken} className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-semibold w-full">
             Sign in with Google
           </button>
-          <p className="text-xs text-slate-500">
-            This will open a popup to authorize access to your Google Sheets
-          </p>
         </div>
       </div>
     );
@@ -309,7 +356,7 @@ function App() {
         <div className="bg-white rounded-lg shadow mb-6">
           <div className="flex border-b">
             <button onClick={() => setActiveTab('assets')} className={`px-6 py-3 font-semibold ${activeTab === 'assets' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-600'}`}>
-              Assets ({assets.length})
+              Assets ({calculatedAssets.length})
             </button>
             <button onClick={() => setActiveTab('transactions')} className={`px-6 py-3 font-semibold ${activeTab === 'transactions' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-600'}`}>
               Transactions ({transactions.length})
@@ -320,8 +367,8 @@ function App() {
           </div>
         </div>
 
-        {activeTab === 'assets' && <AssetsView assets={assets} />}
-        {activeTab === 'transactions' && <TransactionsView transactions={transactions} />}
+        {activeTab === 'assets' && <AssetsView assets={calculatedAssets} />}
+        {activeTab === 'transactions' && <TransactionsView transactions={transactions} accounts={accounts} masterAssets={masterAssets} onAddTransaction={handleAddTransaction} />}
         {activeTab === 'accounts' && <AccountsView accounts={accounts} />}
       </div>
     </div>
@@ -344,7 +391,7 @@ function AssetsView({ assets }) {
   };
 
   if (assets.length === 0) {
-    return <div className="text-center py-12 text-slate-600">No assets found. Add transactions to see your portfolio.</div>;
+    return <div className="text-center py-12 text-slate-600">No assets found. Add assets and transactions to see your portfolio.</div>;
   }
 
   return (
@@ -393,6 +440,8 @@ function AssetsView({ assets }) {
             <tr>
               <th className="px-4 py-3 text-left font-semibold">Asset</th>
               <th className="px-4 py-3 text-left font-semibold">Symbol</th>
+              <th className="px-4 py-3 text-left font-semibold">Portfolio</th>
+              <th className="px-4 py-3 text-right font-semibold">Price</th>
               <th className="px-4 py-3 text-right font-semibold">Holdings</th>
               <th className="px-4 py-3 text-right font-semibold">Value (SGD)</th>
               <th className="px-4 py-3 text-right font-semibold">Total P/L</th>
@@ -402,12 +451,14 @@ function AssetsView({ assets }) {
           <tbody>
             {assets.map((asset, idx) => (
               <tr key={idx} className="border-b hover:bg-slate-50">
-                <td className="px-4 py-3 font-medium">{asset.asset}</td>
+                <td className="px-4 py-3 font-medium">{asset.name}</td>
                 <td className="px-4 py-3 text-slate-600">{asset.symbol}</td>
+                <td className="px-4 py-3"><span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">{asset.portfolio}</span></td>
+                <td className="px-4 py-3 text-right">{asset.currentPrice.toFixed(2)}</td>
                 <td className="px-4 py-3 text-right">{asset.currentHoldings.toLocaleString()}</td>
-                <td className="px-4 py-3 text-right font-medium">{formatCurrency(asset.currentValueSGD)}</td>
+                <td className="px-4 py-3 text-right font-medium">{new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(asset.currentValueSGD)}</td>
                 <td className={`px-4 py-3 text-right font-medium ${asset.totalProfitLossSGD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {formatCurrency(asset.totalProfitLossSGD)}
+                  {new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(asset.totalProfitLossSGD)}
                 </td>
                 <td className={`px-4 py-3 text-right ${asset.roiPercent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {asset.roiPercent.toFixed(2)}%
@@ -421,10 +472,99 @@ function AssetsView({ assets }) {
   );
 }
 
-function TransactionsView({ transactions }) {
+function TransactionsView({ transactions, accounts, masterAssets, onAddTransaction }) {
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState({
+    date: '', type: 'Buy', symbol: '', asset: '', transactedUnits: '', transactedPrice: '', fees: '0', accountName: '',
+    isNewAsset: false, portfolio: '', category: '', exchange: '', currency: 'USD'
+  });
+
+  const handleSymbolChange = (e) => {
+    const symbol = e.target.value.toUpperCase();
+    const existingAsset = masterAssets.find(a => a.symbol === symbol);
+    
+    if (existingAsset) {
+      setFormData({
+        ...formData,
+        symbol,
+        asset: existingAsset.name,
+        portfolio: existingAsset.portfolio,
+        category: existingAsset.category,
+        exchange: existingAsset.exchange,
+        currency: existingAsset.currency,
+        isNewAsset: false
+      });
+    } else {
+      setFormData({ ...formData, symbol, isNewAsset: true });
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const account = accounts.find(a => a.accountName === formData.accountName);
+    if (!account) {
+      alert('Please select a valid account');
+      return;
+    }
+
+    await onAddTransaction({
+      ...formData,
+      transactedUnits: parseFloat(formData.transactedUnits),
+      transactedPrice: parseFloat(formData.transactedPrice),
+      fees: parseFloat(formData.fees),
+      owner: account.owner
+    });
+    
+    setShowForm(false);
+    setFormData({
+      date: '', type: 'Buy', symbol: '', asset: '', transactedUnits: '', transactedPrice: '', fees: '0', accountName: '',
+      isNewAsset: false, portfolio: '', category: '', exchange: '', currency: 'USD'
+    });
+  };
+
   return (
     <div>
-      <h2 className="text-xl font-bold text-slate-800 mb-6">Transaction History</h2>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-bold text-slate-800">Transaction History</h2>
+        <button onClick={() => setShowForm(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
+          <Plus size={20} />
+          Add Transaction
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-4">New Transaction</h3>
+          <form onSubmit={handleSubmit}>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Date</label><input type="date" required value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Type</label><select value={formData.type} onChange={(e) => setFormData({ ...formData, type: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2"><option>Buy</option><option>Sell</option><option>Dividend</option></select></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Symbol</label><input type="text" required value={formData.symbol} onChange={handleSymbolChange} className="w-full border border-slate-300 rounded px-3 py-2" placeholder="e.g., AAPL" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Asset Name</label><input type="text" required value={formData.asset} onChange={(e) => setFormData({ ...formData, asset: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" disabled={!formData.isNewAsset} /></div>
+              
+              {formData.isNewAsset && (
+                <>
+                  <div><label className="block text-sm font-medium text-slate-700 mb-1">Portfolio</label><input type="text" value={formData.portfolio} onChange={(e) => setFormData({ ...formData, portfolio: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" /></div>
+                  <div><label className="block text-sm font-medium text-slate-700 mb-1">Category</label><input type="text" value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" /></div>
+                  <div><label className="block text-sm font-medium text-slate-700 mb-1">Exchange</label><input type="text" value={formData.exchange} onChange={(e) => setFormData({ ...formData, exchange: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" /></div>
+                  <div><label className="block text-sm font-medium text-slate-700 mb-1">Currency</label><input type="text" value={formData.currency} onChange={(e) => setFormData({ ...formData, currency: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" /></div>
+                </>
+              )}
+              
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Account</label><select required value={formData.accountName} onChange={(e) => setFormData({ ...formData, accountName: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2"><option value="">Select Account</option>{accounts.map(a => <option key={a.id} value={a.accountName}>{a.accountName} ({a.owner})</option>)}</select></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Units</label><input type="number" step="any" required value={formData.transactedUnits} onChange={(e) => setFormData({ ...formData, transactedUnits: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Price (per unit)</label><input type="number" step="any" required value={formData.transactedPrice} onChange={(e) => setFormData({ ...formData, transactedPrice: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Fees</label><input type="number" step="any" value={formData.fees} onChange={(e) => setFormData({ ...formData, fees: e.target.value })} className="w-full border border-slate-300 rounded px-3 py-2" /></div>
+            </div>
+            {formData.isNewAsset && <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-2 rounded mb-4 text-sm">This is a new asset and will be added to your Assets sheet.</div>}
+            <div className="flex gap-2">
+              <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Add Transaction</button>
+              <button type="button" onClick={() => setShowForm(false)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded hover:bg-slate-300">Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-100 border-b">
