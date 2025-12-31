@@ -198,6 +198,43 @@ function App() {
       'LINK': 'chainlink'
     };
     
+    // Exchange suffix mapping
+    const getTickerWithExchange = (symbol, exchange) => {
+      const upperExchange = (exchange || '').toUpperCase();
+      
+      // Map exchange names to Yahoo Finance suffixes
+      const exchangeSuffixMap = {
+        'SGX': '.SI',
+        'SINGAPORE': '.SI',
+        'HKEX': '.HK',
+        'HONG KONG': '.HK',
+        'LSE': '.L',
+        'LONDON': '.L',
+        'ASX': '.AX',
+        'AUSTRALIA': '.AX',
+        'TSE': '.TO',
+        'TORONTO': '.TO',
+        'NYSE': '',
+        'NASDAQ': '',
+        'US': ''
+      };
+      
+      // Check if symbol already has a suffix
+      if (symbol.includes('.')) {
+        return symbol;
+      }
+      
+      // Find matching exchange suffix
+      for (const [exchangeName, suffix] of Object.entries(exchangeSuffixMap)) {
+        if (upperExchange.includes(exchangeName)) {
+          return symbol + suffix;
+        }
+      }
+      
+      // Default: no suffix (assumes US market)
+      return symbol;
+    };
+    
     for (const asset of assets) {
       try {
         let price = null;
@@ -220,12 +257,13 @@ function App() {
             console.error(`✗ CoinGecko error for ${asset.symbol}:`, err);
           }
         } else {
-          // For stocks/bonds, use Yahoo Finance with CORS proxy
-          console.log(`Fetching stock price for ${asset.symbol}`);
+          // For stocks/bonds, use Yahoo Finance with proper ticker
+          const ticker = getTickerWithExchange(asset.symbol, asset.exchange);
+          console.log(`Fetching stock price for ${asset.symbol} (ticker: ${ticker}, exchange: ${asset.exchange})`);
           
           try {
             // Use allorigins.win as CORS proxy
-            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${asset.symbol}?interval=1d&range=1d`;
+            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`;
             const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
             
             const response = await fetch(proxyUrl);
@@ -242,6 +280,8 @@ function App() {
                   price = validCloses[validCloses.length - 1];
                   console.log(`✓ Got close price for ${asset.symbol}: ${price}`);
                 }
+              } else {
+                console.log(`✗ No price data found for ${asset.symbol} (${ticker})`);
               }
             }
           } catch (err) {
