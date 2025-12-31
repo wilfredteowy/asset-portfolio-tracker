@@ -180,78 +180,16 @@ function App() {
   const fetchPrices = async (assets) => {
     const priceMap = {};
     
-    // Map common crypto symbols to CoinGecko IDs
-    const cryptoIdMap = {
-      'BTC': 'bitcoin',
-      'ETH': 'ethereum',
-      'USDT': 'tether',
-      'BNB': 'binancecoin',
-      'SOL': 'solana',
-      'XRP': 'ripple',
-      'ADA': 'cardano',
-      'DOGE': 'dogecoin',
-      'MATIC': 'matic-network'
-    };
-    
     for (const asset of assets) {
-      try {
-        let price = 100; // Default fallback
-        
-        if (asset.category === 'Crypto') {
-          // CoinGecko has CORS enabled, should work directly
-          const coinId = cryptoIdMap[asset.symbol] || asset.symbol.toLowerCase();
-          console.log(`Fetching crypto price for ${asset.symbol} (ID: ${coinId})`);
-          
-          try {
-            const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
-            const data = await response.json();
-            
-            if (data[coinId]?.usd) {
-              price = data[coinId].usd;
-              console.log(`Got price for ${asset.symbol}: ${price}`);
-            }
-          } catch (cryptoErr) {
-            console.error(`CoinGecko error for ${asset.symbol}:`, cryptoErr);
-          }
-        } else {
-          // Use CORS proxy for Yahoo Finance
-          console.log(`Fetching stock price for ${asset.symbol}`);
-          
-          try {
-            const proxyUrl = 'https://api.allorigins.win/raw?url=';
-            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${asset.symbol}?interval=1d&range=1d`;
-            
-            const response = await fetch(proxyUrl + encodeURIComponent(yahooUrl));
-            const data = await response.json();
-            
-            if (data.chart?.result?.[0]?.meta?.regularMarketPrice) {
-              price = data.chart.result[0].meta.regularMarketPrice;
-              console.log(`Got price for ${asset.symbol}: ${price}`);
-            } else if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
-              const closes = data.chart.result[0].indicators.quote[0].close;
-              const validCloses = closes.filter(c => c !== null);
-              if (validCloses.length > 0) {
-                price = validCloses[validCloses.length - 1];
-                console.log(`Got close price for ${asset.symbol}: ${price}`);
-              }
-            }
-          } catch (stockErr) {
-            console.error(`Yahoo Finance error for ${asset.symbol}:`, stockErr);
-          }
-        }
-        
-        priceMap[asset.symbol] = price;
-      } catch (err) {
-        console.error(`Error fetching price for ${asset.symbol}:`, err);
-        priceMap[asset.symbol] = 100;
-      }
-      
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Set all prices to null initially (will display as "--")
+      priceMap[asset.symbol] = null;
     }
     
-    console.log('Final price map:', priceMap);
     setPrices(priceMap);
+    
+    // Note: Price fetching is disabled due to CORS restrictions
+    // Users should manually update prices or we need a backend proxy
+    console.log('Price fetching is currently disabled. Prices will show as "--"');
   };
 
   const calculateAssets = (assets, txns) => {
@@ -288,11 +226,11 @@ function App() {
         }
       });
 
-      const currentPrice = prices[asset.symbol] || 100;
+      const currentPrice = prices[asset.symbol] !== null ? prices[asset.symbol] : null;
       const costPerUnit = currentHoldings > 0 ? costOfCurrentHoldings / currentHoldings : 0;
-      const currentValue = currentHoldings * currentPrice;
-      const paperProfitLoss = currentValue - costOfCurrentHoldings;
-      const paperProfitLossPercent = costOfCurrentHoldings > 0 ? (paperProfitLoss / costOfCurrentHoldings) * 100 : 0;
+      const currentValue = currentPrice !== null ? currentHoldings * currentPrice : null;
+      const paperProfitLoss = currentValue !== null ? currentValue - costOfCurrentHoldings : null;
+      const paperProfitLossPercent = costOfCurrentHoldings > 0 && paperProfitLoss !== null ? (paperProfitLoss / costOfCurrentHoldings) * 100 : null;
       const sgdRate = asset.currency === 'SGD' ? 1 : 1.35;
       
       return {
@@ -304,15 +242,15 @@ function App() {
         cumulativeCost,
         costPerUnit,
         costOfCurrentHoldingsSGD: costOfCurrentHoldings * sgdRate,
-        currentValue,
-        currentValueSGD: currentValue * sgdRate,
-        paperProfitLoss,
-        paperProfitLossPercent,
+        currentValue: currentValue || 0,
+        currentValueSGD: currentValue !== null ? currentValue * sgdRate : null,
+        paperProfitLoss: paperProfitLoss || 0,
+        paperProfitLossPercent: paperProfitLossPercent || 0,
         realizedProfitLossSGD: realizedPL * sgdRate,
         dividendsCollected: dividends,
         dividendsCollectedSGD: dividends * sgdRate,
-        totalProfitLossSGD: (paperProfitLoss + realizedPL + dividends) * sgdRate,
-        roiPercent: cumulativeCost > 0 ? ((paperProfitLoss + realizedPL + dividends) / cumulativeCost) * 100 : 0
+        totalProfitLossSGD: currentValue !== null ? (paperProfitLoss + realizedPL + dividends) * sgdRate : null,
+        roiPercent: cumulativeCost > 0 && currentValue !== null ? ((paperProfitLoss + realizedPL + dividends) / cumulativeCost) * 100 : null
       };
     });
 
@@ -497,14 +435,34 @@ function AssetsView({ assets }) {
                 <td className="px-4 py-3 font-medium">{asset.name}</td>
                 <td className="px-4 py-3 text-slate-600">{asset.symbol}</td>
                 <td className="px-4 py-3"><span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">{asset.portfolio}</span></td>
-                <td className="px-4 py-3 text-right">{asset.currentPrice.toFixed(2)}</td>
-                <td className="px-4 py-3 text-right">{asset.currentHoldings.toLocaleString()}</td>
-                <td className="px-4 py-3 text-right font-medium">{new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(asset.currentValueSGD)}</td>
-                <td className={`px-4 py-3 text-right font-medium ${asset.totalProfitLossSGD >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(asset.totalProfitLossSGD)}
+                <td className="px-4 py-3 text-right">
+                  {asset.currentPrice !== null ? (
+                    <span>{asset.currentPrice.toFixed(2)}</span>
+                  ) : (
+                    <span className="text-orange-500 font-semibold">--</span>
+                  )}
                 </td>
-                <td className={`px-4 py-3 text-right ${asset.roiPercent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {asset.roiPercent.toFixed(2)}%
+                <td className="px-4 py-3 text-right">{asset.currentHoldings.toLocaleString()}</td>
+                <td className="px-4 py-3 text-right font-medium">
+                  {asset.currentValueSGD !== null ? (
+                    new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(asset.currentValueSGD)
+                  ) : (
+                    <span className="text-orange-500 font-semibold">--</span>
+                  )}
+                </td>
+                <td className={`px-4 py-3 text-right font-medium ${asset.totalProfitLossSGD !== null ? (asset.totalProfitLossSGD >= 0 ? 'text-green-600' : 'text-red-600') : ''}`}>
+                  {asset.totalProfitLossSGD !== null ? (
+                    new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(asset.totalProfitLossSGD)
+                  ) : (
+                    <span className="text-orange-500 font-semibold">--</span>
+                  )}
+                </td>
+                <td className={`px-4 py-3 text-right ${asset.roiPercent !== null ? (asset.roiPercent >= 0 ? 'text-green-600' : 'text-red-600') : ''}`}>
+                  {asset.roiPercent !== null ? (
+                    `${asset.roiPercent.toFixed(2)}%`
+                  ) : (
+                    <span className="text-orange-500 font-semibold">--</span>
+                  )}
                 </td>
               </tr>
             ))}
