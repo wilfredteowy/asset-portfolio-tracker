@@ -200,12 +200,16 @@ function App() {
     
     // Exchange suffix mapping
     const getTickerWithExchange = (symbol, exchange) => {
+      const upperSymbol = (symbol || '').toUpperCase();
       const upperExchange = (exchange || '').toUpperCase();
       
       // Map exchange names to Yahoo Finance suffixes
       const exchangeSuffixMap = {
         'SGX': '.SI',
         'SINGAPORE': '.SI',
+        'SBF': '.PA',
+        'PARIS': '.PA',
+        'EURONEXT': '.PA',
         'HKEX': '.HK',
         'HONG KONG': '.HK',
         'LSE': '.L',
@@ -220,19 +224,19 @@ function App() {
       };
       
       // Check if symbol already has a suffix
-      if (symbol.includes('.')) {
-        return symbol;
+      if (upperSymbol.includes('.')) {
+        return upperSymbol;
       }
       
       // Find matching exchange suffix
       for (const [exchangeName, suffix] of Object.entries(exchangeSuffixMap)) {
         if (upperExchange.includes(exchangeName)) {
-          return symbol + suffix;
+          return upperSymbol + suffix;
         }
       }
       
       // Default: no suffix (assumes US market)
-      return symbol;
+      return upperSymbol;
     };
     
     for (const asset of assets) {
