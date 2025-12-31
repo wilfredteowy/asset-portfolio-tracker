@@ -359,10 +359,18 @@ function App() {
 function AssetsView({ assets }) {
   const summary = useMemo(() => {
     return assets.reduce((acc, asset) => {
-      acc.totalValue += asset.currentValueSGD;
-      acc.totalPaperPL += asset.paperProfitLoss * (asset.currency === 'SGD' ? 1 : 1.35);
-      acc.totalRealizedPL += asset.realizedProfitLossSGD;
-      acc.totalPL += asset.totalProfitLossSGD;
+      if (asset.currentValueSGD !== null) {
+        acc.totalValue += asset.currentValueSGD;
+      }
+      if (asset.paperProfitLoss !== null) {
+        acc.totalPaperPL += asset.paperProfitLoss * (asset.currency === 'SGD' ? 1 : 1.35);
+      }
+      if (asset.realizedProfitLossSGD !== null) {
+        acc.totalRealizedPL += asset.realizedProfitLossSGD;
+      }
+      if (asset.totalProfitLossSGD !== null) {
+        acc.totalPL += asset.totalProfitLossSGD;
+      }
       return acc;
     }, { totalValue: 0, totalPaperPL: 0, totalRealizedPL: 0, totalPL: 0 });
   }, [assets]);
@@ -436,7 +444,7 @@ function AssetsView({ assets }) {
                 <td className="px-4 py-3 text-slate-600">{asset.symbol}</td>
                 <td className="px-4 py-3"><span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">{asset.portfolio}</span></td>
                 <td className="px-4 py-3 text-right">
-                  {asset.currentPrice !== null ? (
+                  {asset.currentPrice !== null && asset.currentPrice !== undefined ? (
                     <span>{asset.currentPrice.toFixed(2)}</span>
                   ) : (
                     <span className="text-orange-500 font-semibold">--</span>
