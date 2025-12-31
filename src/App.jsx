@@ -262,6 +262,10 @@ function App() {
     
     console.log('Final price map:', priceMap);
     setPrices(priceMap);
+    
+    // Recalculate assets with new prices
+    calculateAssets(assets, transactions);
+    
     setIsFetchingPrices(false);
   };
 
@@ -440,9 +444,6 @@ function App() {
 }
 
 function AssetsView({ assets }) {
-  const [updatingPrices, setUpdatingPrices] = useState(false);
-  const [priceInput, setPriceInput] = useState({});
-  
   const summary = useMemo(() => {
     return assets.reduce((acc, asset) => {
       if (asset.currentValueSGD !== null) {
@@ -463,38 +464,6 @@ function AssetsView({ assets }) {
 
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD', minimumFractionDigits: 2 }).format(value);
-  };
-
-  const handlePriceUpdate = (symbol, newPrice) => {
-    setPriceInput({ ...priceInput, [symbol]: newPrice });
-  };
-
-  const savePriceUpdate = (asset, idx) => {
-    const newPrice = parseFloat(priceInput[asset.symbol]);
-    if (isNaN(newPrice) || newPrice <= 0) {
-      alert('Please enter a valid price');
-      return;
-    }
-    
-    // Update the asset's price in the parent component
-    // Since we can't directly modify props, we'll need to emit this change
-    // For now, just update locally
-    assets[idx].currentPrice = newPrice;
-    
-    // Recalculate values
-    const sgdRate = asset.currency === 'SGD' ? 1 : 1.35;
-    assets[idx].currentValue = asset.currentHoldings * newPrice;
-    assets[idx].currentValueSGD = assets[idx].currentValue * sgdRate;
-    assets[idx].paperProfitLoss = assets[idx].currentValue - asset.costOfCurrentHoldings;
-    assets[idx].paperProfitLossPercent = asset.costOfCurrentHoldings > 0 ? (assets[idx].paperProfitLoss / asset.costOfCurrentHoldings) * 100 : null;
-    assets[idx].totalProfitLossSGD = (assets[idx].paperProfitLoss + (asset.realizedProfitLossSGD / sgdRate) + asset.dividendsCollected) * sgdRate;
-    assets[idx].roiPercent = asset.cumulativeCost > 0 ? ((assets[idx].paperProfitLoss + (asset.realizedProfitLossSGD / sgdRate) + asset.dividendsCollected) / asset.cumulativeCost) * 100 : null;
-    
-    // Clear input
-    setPriceInput({ ...priceInput, [asset.symbol]: '' });
-    
-    // Force re-render
-    setUpdatingPrices(!updatingPrices);
   };
 
   if (assets.length === 0) {
@@ -549,7 +518,6 @@ function AssetsView({ assets }) {
               <th className="px-4 py-3 text-left font-semibold">Symbol</th>
               <th className="px-4 py-3 text-left font-semibold">Portfolio</th>
               <th className="px-4 py-3 text-right font-semibold">Price</th>
-              <th className="px-4 py-3 text-center font-semibold">Update Price</th>
               <th className="px-4 py-3 text-right font-semibold">Holdings</th>
               <th className="px-4 py-3 text-right font-semibold">Value (SGD)</th>
               <th className="px-4 py-3 text-right font-semibold">Total P/L</th>
@@ -568,24 +536,6 @@ function AssetsView({ assets }) {
                   ) : (
                     <span className="text-orange-500 font-semibold">--</span>
                   )}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="Enter price"
-                      value={priceInput[asset.symbol] || ''}
-                      onChange={(e) => handlePriceUpdate(asset.symbol, e.target.value)}
-                      className="w-24 border border-slate-300 rounded px-2 py-1 text-sm"
-                    />
-                    <button
-                      onClick={() => savePriceUpdate(asset, idx)}
-                      className="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700"
-                    >
-                      Set
-                    </button>
-                  </div>
                 </td>
                 <td className="px-4 py-3 text-right">{asset.currentHoldings.toLocaleString()}</td>
                 <td className="px-4 py-3 text-right font-medium">
