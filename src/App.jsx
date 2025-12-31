@@ -182,8 +182,13 @@ function App() {
     setIsFetchingPrices(true);
     const priceMap = {};
     
+    // Filter assets that have symbols
+    const assetsWithSymbols = assets.filter(asset => asset.symbol && asset.symbol.trim() !== '');
+    
+    console.log(`Fetching prices for ${assetsWithSymbols.length} out of ${assets.length} assets`);
+    
     // Initialize all prices as null (fetching)
-    assets.forEach(asset => {
+    assetsWithSymbols.forEach(asset => {
       priceMap[asset.symbol] = null;
     });
     setPrices({ ...priceMap });
