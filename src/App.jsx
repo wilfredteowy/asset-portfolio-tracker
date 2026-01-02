@@ -181,18 +181,18 @@ function App() {
   const fetchPrices = async (assets) => {
     setIsFetchingPrices(true);
     const priceMap = {};
-    
+
     // Filter assets that have symbols
     const assetsWithSymbols = assets.filter(asset => asset.symbol && asset.symbol.trim() !== '');
-    
+
     console.log(`Fetching prices for ${assetsWithSymbols.length} out of ${assets.length} assets`);
-    
+
     // Initialize all prices as null (fetching)
     assetsWithSymbols.forEach(asset => {
       priceMap[asset.symbol] = null;
     });
     setPrices({ ...priceMap });
-    
+
     // Map common crypto symbols to CoinGecko IDs
     const cryptoIdMap = {
       'BTC': 'bitcoin',
@@ -208,12 +208,12 @@ function App() {
       'DOT': 'polkadot',
       'LINK': 'chainlink'
     };
-    
+
     // Exchange suffix mapping
     const getTickerWithExchange = (symbol, exchange) => {
       const upperSymbol = (symbol || '').toUpperCase();
       const upperExchange = (exchange || '').toUpperCase();
-      
+
       // Map exchange names to Yahoo Finance suffixes
       const exchangeSuffixMap = {
         'SGX': '.SI',
@@ -233,98 +233,130 @@ function App() {
         'NASDAQ': '',
         'US': ''
       };
-      
+
       // Check if symbol already has a suffix
       if (upperSymbol.includes('.')) {
         return upperSymbol;
       }
-      
+
       // Find matching exchange suffix
       for (const [exchangeName, suffix] of Object.entries(exchangeSuffixMap)) {
         if (upperExchange.includes(exchangeName)) {
           return upperSymbol + suffix;
         }
       }
-      
+
       // Default: no suffix (assumes US market)
       return upperSymbol;
     };
-    
-    for (const asset of assets) {
-      try {
-        let price = null;
-        
-        if (asset.category === 'Crypto') {
-          // Use CoinGecko for crypto (has CORS enabled)
-          const coinId = cryptoIdMap[asset.symbol] || asset.symbol.toLowerCase();
-          console.log(`Fetching crypto price for ${asset.symbol} (ID: ${coinId})`);
-          
-          try {
-            const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
-            if (response.ok) {
-              const data = await response.json();
-              if (data[coinId]?.usd) {
-                price = data[coinId].usd;
-                console.log(`✓ Got price for ${asset.symbol}: ${price}`);
-              }
+
+    // Helper: chunk arrays
+    const chunkArray = (arr, size) => {
+      const chunks = [];
+      for (let i = 0; i < arr.length; i += size) {
+        chunks.push(arr.slice(i, i + size));
+      }
+      return chunks;
+    };
+
+    // Split assets into crypto and non-crypto groups
+    const cryptoAssets = assetsWithSymbols.filter(a => a.category === 'Crypto');
+    const stockAssets = assetsWithSymbols.filter(a => a.category !== 'Crypto');
+
+    // ---- Batch fetch cryptos from CoinGecko ----
+    if (cryptoAssets.length > 0) {
+      // Build mapping coinId -> symbols
+      const coinIdToSymbols = {};
+      cryptoAssets.forEach(a => {
+        const coinId = cryptoIdMap[a.symbol] || a.symbol.toLowerCase();
+        coinIdToSymbols[coinId] = coinIdToSymbols[coinId] || [];
+        coinIdToSymbols[coinId].push(a.symbol);
+      });
+
+      const uniqueCoinIds = Object.keys(coinIdToSymbols);
+      const batches = chunkArray(uniqueCoinIds, 50); // CoinGecko can accept many ids; chunk to be safe
+
+      for (const batch of batches) {
+        try {
+          const idsParam = batch.join(',');
+          console.log(`Fetching crypto batch: ${idsParam}`);
+          const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(idsParam)}&vs_currencies=usd`);
+          if (response.ok) {
+            const data = await response.json();
+            for (const coinId of batch) {
+              const symbols = coinIdToSymbols[coinId] || [];
+              const price = data[coinId]?.usd ?? null;
+              symbols.forEach(sym => { priceMap[sym] = price; });
             }
-          } catch (err) {
-            console.error(`✗ CoinGecko error for ${asset.symbol}:`, err);
+          } else {
+            console.error(`CoinGecko batch failed: ${response.status}`);
           }
-        } else {
-          // For stocks/bonds, use Yahoo Finance with proper ticker
-          const ticker = getTickerWithExchange(asset.symbol, asset.exchange);
-          console.log(`Fetching stock price for ${asset.symbol} (ticker: ${ticker}, exchange: ${asset.exchange})`);
-          
-          try {
-            // Use allorigins.win as CORS proxy
-            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`;
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
-            
-            const response = await fetch(proxyUrl);
-            if (response.ok) {
-              const data = await response.json();
-              
-              if (data.chart?.result?.[0]?.meta?.regularMarketPrice) {
-                price = data.chart.result[0].meta.regularMarketPrice;
-                console.log(`✓ Got price for ${asset.symbol}: ${price}`);
-              } else if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
-                const closes = data.chart.result[0].indicators.quote[0].close;
-                const validCloses = closes.filter(c => c !== null && c !== undefined);
-                if (validCloses.length > 0) {
-                  price = validCloses[validCloses.length - 1];
-                  console.log(`✓ Got close price for ${asset.symbol}: ${price}`);
-                }
-              } else {
-                console.log(`✗ No price data found for ${asset.symbol} (${ticker})`);
-              }
-            }
-          } catch (err) {
-            console.error(`✗ Yahoo Finance error for ${asset.symbol}:`, err);
-          }
+        } catch (err) {
+          console.error('CoinGecko batch error:', err);
         }
-        
-        priceMap[asset.symbol] = price;
-        
-        // Update immediately for this asset
+
+        // Update UI per batch
         setPrices({ ...priceMap });
         calculateAssets(assets, transactions);
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 250));
-        
-      } catch (err) {
-        console.error(`Error fetching price for ${asset.symbol}:`, err);
-        priceMap[asset.symbol] = null;
+
+        // Small pause to be polite to APIs
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
-    
+
+    // ---- Batch fetch stocks via Yahoo (quote endpoint) ----
+    if (stockAssets.length > 0) {
+      // Build mapping ticker -> symbols
+      const tickerToSymbols = {};
+      stockAssets.forEach(a => {
+        const ticker = getTickerWithExchange(a.symbol, a.exchange);
+        tickerToSymbols[ticker] = tickerToSymbols[ticker] || [];
+        tickerToSymbols[ticker].push(a.symbol);
+      });
+
+      const uniqueTickers = Object.keys(tickerToSymbols);
+      const batches = chunkArray(uniqueTickers, 10); // keep batches modest
+
+      for (const batch of batches) {
+        try {
+          const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${batch.join(',')}`;
+          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+          console.log(`Fetching stock batch: ${batch.join(',')}`);
+
+          const response = await fetch(proxyUrl);
+          if (response.ok) {
+            const data = await response.json();
+            const results = data?.quoteResponse?.result || [];
+            results.forEach(q => {
+              const ticker = (q.symbol || '').toUpperCase();
+              const price = q.regularMarketPrice ?? q.regularMarketPreviousClose ?? null;
+              const symbols = tickerToSymbols[ticker] || [];
+              symbols.forEach(sym => { priceMap[sym] = price; });
+            });
+
+            // For any tickers not returned, we leave price as null
+          } else {
+            console.error(`Yahoo batch failed: ${response.status}`);
+          }
+        } catch (err) {
+          console.error('Yahoo batch error:', err);
+        }
+
+        // Update UI per batch
+        setPrices({ ...priceMap });
+        calculateAssets(assets, transactions);
+
+        // Small pause between batches
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+
     console.log('Final price map:', priceMap);
     setPrices(priceMap);
-    
+
     // Recalculate assets with new prices
     calculateAssets(assets, transactions);
-    
+
     setIsFetchingPrices(false);
   };
 
